@@ -2,10 +2,9 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Camera, CameraOff, Loader, AlertTriangle } from 'lucide-react';
-import { useEmotionDetection } from '@/hooks/useEmotionDetection';
-import EmotionDisplay from './EmotionDisplay';
-import { useToast } from '@/hooks/use-toast';
+import { Camera, CameraOff, Activity, Brain } from 'lucide-react';
+import { useFaceApiEmotionDetection } from '@/hooks/useFaceApiEmotionDetection';
+import EmotionalStatePanel from './EmotionalStatePanel';
 
 interface CameraEmotionDetectorProps {
   onEmotionUpdate?: (emotion: any) => void;
@@ -13,185 +12,150 @@ interface CameraEmotionDetectorProps {
 
 const CameraEmotionDetector: React.FC<CameraEmotionDetectorProps> = ({ onEmotionUpdate }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const [isCameraActive, setIsCameraActive] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const { toast } = useToast();
+  const [cameraEnabled, setCameraEnabled] = useState(false);
+  const [stream, setStream] = useState<MediaStream | null>(null);
+  const [isVideoReady, setIsVideoReady] = useState(false);
 
-  // Use real emotion detection
-  const emotionState = useEmotionDetection(videoRef, isCameraActive);
+  // Use face-api.js emotion detection
+  const emotionResult = useFaceApiEmotionDetection(videoRef, cameraEnabled && isVideoReady);
 
-  // Notify parent of emotion updates
+  // Call onEmotionUpdate when emotion changes
   useEffect(() => {
-    if (onEmotionUpdate && emotionState.confidence > 0) {
-      onEmotionUpdate(emotionState);
+    if (onEmotionUpdate && emotionResult.dominant) {
+      onEmotionUpdate(emotionResult);
     }
-  }, [emotionState, onEmotionUpdate]);
+  }, [emotionResult, onEmotionUpdate]);
 
-  const startCamera = async () => {
-    setIsLoading(true);
-    setError(null);
-
+  // Initialize camera
+  const initializeCamera = async () => {
     try {
-      // Request higher resolution for better face detection
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          width: { ideal: 1280, min: 640 },
-          height: { ideal: 720, min: 480 },
-          facingMode: 'user',
-          frameRate: { ideal: 30, min: 15 }
-        }
+      const mediaStream = await navigator.mediaDevices.getUserMedia({ 
+        video: { 
+          width: { ideal: 640 },
+          height: { ideal: 480 },
+          frameRate: { max: 30 },
+          facingMode: 'user'
+        },
+        audio: false
       });
-
+      
       if (videoRef.current) {
-        videoRef.current.srcObject = stream;
+        videoRef.current.srcObject = mediaStream;
+        setStream(mediaStream);
+        setCameraEnabled(true);
         
-        // Wait for video to be ready
-        await new Promise((resolve) => {
-          if (videoRef.current) {
-            videoRef.current.onloadeddata = resolve;
-          }
-        });
-        
-        await videoRef.current.play();
-        setIsCameraActive(true);
-        
-        console.log('📷 Camera started successfully');
-        console.log('📹 Video dimensions:', {
-          width: videoRef.current.videoWidth,
-          height: videoRef.current.videoHeight
-        });
-        
-        toast({
-          title: "Camera activated",
-          description: "Real-time emotion detection is now active. Try making different facial expressions!",
-        });
+        videoRef.current.onloadeddata = () => {
+          setIsVideoReady(true);
+          console.log('📹 Video ready for face-api.js emotion detection');
+        };
       }
-    } catch (err: any) {
-      console.error('Camera access error:', err);
-      setError(err.name === 'NotAllowedError' 
-        ? 'Camera access denied. Please allow camera permissions and refresh the page.'
-        : 'Unable to access camera. Please check your camera settings.'
-      );
-      toast({
-        title: "Camera Error",
-        description: "Unable to access camera for emotion detection.",
-        variant: "destructive"
-      });
-    } finally {
-      setIsLoading(false);
+    } catch (error) {
+      console.error('Error accessing camera:', error);
     }
   };
 
+  // Stop camera
   const stopCamera = () => {
-    if (videoRef.current?.srcObject) {
-      const stream = videoRef.current.srcObject as MediaStream;
+    if (stream) {
       stream.getTracks().forEach(track => track.stop());
+      setStream(null);
+    }
+    if (videoRef.current) {
       videoRef.current.srcObject = null;
     }
-    setIsCameraActive(false);
-    toast({
-      title: "Camera deactivated",
-      description: "Emotion detection has been stopped.",
-    });
+    setCameraEnabled(false);
+    setIsVideoReady(false);
   };
 
+  // Toggle camera
   const toggleCamera = () => {
-    if (isCameraActive) {
+    if (cameraEnabled) {
       stopCamera();
     } else {
-      startCamera();
+      initializeCamera();
     }
   };
 
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      stopCamera();
+    };
+  }, []);
+
   return (
-    <div className="space-y-4">
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
       {/* Camera Feed */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center justify-between">
-            <span>Live Camera Feed</span>
             <div className="flex items-center gap-2">
-              {emotionState.isInitialized && isCameraActive && (
-                <div className="flex items-center gap-1 text-green-600 text-sm">
-                  <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-                  <span>Detecting</span>
-                </div>
-              )}
-              <Button
-                onClick={toggleCamera}
-                variant={isCameraActive ? "destructive" : "default"}
-                size="sm"
-                disabled={isLoading}
-              >
-                {isLoading ? (
-                  <Loader className="h-4 w-4 animate-spin" />
-                ) : isCameraActive ? (
-                  <CameraOff className="h-4 w-4" />
-                ) : (
-                  <Camera className="h-4 w-4" />
-                )}
-                {isLoading ? "Starting..." : isCameraActive ? "Stop Camera" : "Start Camera"}
-              </Button>
+              <Camera className="h-5 w-5" />
+              Live Camera Feed
             </div>
+            <Button
+              variant={cameraEnabled ? "destructive" : "default"}
+              size="sm"
+              onClick={toggleCamera}
+            >
+              {cameraEnabled ? (
+                <>
+                  <CameraOff className="h-4 w-4 mr-2" />
+                  Stop Camera
+                </>
+              ) : (
+                <>
+                  <Camera className="h-4 w-4 mr-2" />
+                  Start Camera
+                </>
+              )}
+            </Button>
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="relative w-full h-64 bg-gray-900 rounded-lg overflow-hidden">
-            {error && (
-              <div className="absolute inset-0 flex items-center justify-center bg-red-100 text-red-800 p-4 text-center">
-                <div>
-                  <AlertTriangle className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                  <p className="text-sm">{error}</p>
-                  <Button
-                    onClick={startCamera}
-                    size="sm"
-                    className="mt-2"
-                    variant="outline"
-                  >
-                    Try Again
-                  </Button>
-                </div>
+          <div className="relative w-full h-80 bg-gray-900 rounded-lg overflow-hidden flex items-center justify-center">
+            {!cameraEnabled && (
+              <div className="text-center text-white">
+                <Camera className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                <p className="text-lg font-medium">Camera Disabled</p>
+                <p className="text-sm opacity-75">Click "Start Camera" to begin emotion detection</p>
               </div>
             )}
             
-            {!isCameraActive && !error && (
-              <div className="absolute inset-0 flex items-center justify-center bg-gray-800 text-white">
-                <div className="text-center">
-                  <Camera className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                  <p className="mb-4">Click "Start Camera" to begin emotion detection</p>
-                  <Button onClick={startCamera} disabled={isLoading}>
-                    {isLoading ? "Starting..." : "Start Camera"}
-                  </Button>
-                </div>
-              </div>
-            )}
-
             <video
               ref={videoRef}
               autoPlay
               playsInline
               muted
-              className={`w-full h-full object-cover ${isCameraActive ? 'opacity-100' : 'opacity-0'}`}
+              className={`w-full h-full object-cover ${isVideoReady ? 'opacity-100' : 'opacity-0'}`}
             />
             
-            {/* Real-time emotion overlay */}
-            {isCameraActive && emotionState.confidence > 0.1 && (
-              <div className="absolute top-2 right-2">
-                <div className="bg-black/70 rounded-lg p-2 text-white text-center">
-                  <div className="text-2xl mb-1">{emotionState.icon}</div>
-                  <div className="text-xs font-medium capitalize">{emotionState.dominant}</div>
-                  <div className="text-xs opacity-75">{Math.round(emotionState.confidence * 100)}%</div>
+            {/* Status Indicators */}
+            {cameraEnabled && (
+              <div className="absolute top-4 left-4 space-y-2">
+                <div className="bg-black/60 rounded-lg px-3 py-2 text-white text-sm flex items-center gap-2">
+                  <div className={`w-2 h-2 rounded-full ${emotionResult.isInitialized ? 'bg-green-400' : 'bg-yellow-400'}`} />
+                  <span>
+                    {emotionResult.isInitialized ? 'face-api.js Ready' : 'Loading Models...'}
+                  </span>
                 </div>
+                
+                {emotionResult.additionalData?.faceDetected && (
+                  <div className="bg-black/60 rounded-lg px-3 py-2 text-white text-sm flex items-center gap-2">
+                    <Activity className="h-3 w-3 text-green-400" />
+                    <span>Face Detected</span>
+                  </div>
+                )}
               </div>
             )}
             
-            {/* Initialization status */}
-            {isCameraActive && !emotionState.isInitialized && (
-              <div className="absolute bottom-2 left-2">
-                <div className="bg-blue-600/80 rounded-lg p-2 text-white text-xs flex items-center gap-1">
-                  <Loader className="h-3 w-3 animate-spin" />
-                  <span>Initializing AI...</span>
+            {/* Live Emotion Display */}
+            {cameraEnabled && emotionResult.isInitialized && (
+              <div className="absolute bottom-4 right-4 bg-black/60 rounded-lg px-4 py-3 text-white">
+                <div className="text-center">
+                  <div className="text-2xl mb-1">{emotionResult.icon}</div>
+                  <div className="text-sm font-medium capitalize">{emotionResult.dominant}</div>
+                  <div className="text-xs opacity-75">{Math.round(emotionResult.confidence * 100)}%</div>
                 </div>
               </div>
             )}
@@ -199,29 +163,11 @@ const CameraEmotionDetector: React.FC<CameraEmotionDetectorProps> = ({ onEmotion
         </CardContent>
       </Card>
 
-      {/* Emotion Analysis Display */}
-      {isCameraActive && emotionState.isInitialized && (
-        <EmotionDisplay
-          emotion={emotionState.dominant}
-          confidence={emotionState.confidence}
-          icon={emotionState.icon}
-          scores={emotionState.scores}
-          showDetails={true}
-        />
-      )}
-      
-      {/* Debug info for troubleshooting */}
-      {isCameraActive && (
-        <Card className="border-dashed">
-          <CardContent className="p-3">
-            <div className="text-xs text-gray-600 space-y-1">
-              <div>Initialization: {emotionState.isInitialized ? '✅' : '⏳'}</div>
-              <div>Processing: {emotionState.isProcessing ? '✅' : '❌'}</div>
-              <div>Last Update: {emotionState.timestamp ? new Date(emotionState.timestamp).toLocaleTimeString() : 'Never'}</div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      {/* Emotion Analysis Panel */}
+      <EmotionalStatePanel 
+        emotionState={emotionResult}
+        additionalData={emotionResult.additionalData}
+      />
     </div>
   );
 };
